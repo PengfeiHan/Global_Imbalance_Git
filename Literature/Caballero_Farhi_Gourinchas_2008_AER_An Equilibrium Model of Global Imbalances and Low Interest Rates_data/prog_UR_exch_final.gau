@@ -1,0 +1,429 @@
+/* prog_UR_exch_final.gau. Created POG 11/26/05
+** creates figure: fig_UR_exch0307.eps
+** U-R model with exchange rate. Collapse in deltaR
+** fixed point for solving for the jump in initial asset values
+*/
+
+library pgraph, nlsys;
+graphset;
+nlset;
+__output=0;
+
+
+theta	= 0.25;		/* output/wealth ratio	*/
+gg	= 0.03;		/* U growth rate	*/
+ggr	= gg;		/* R growth rate 	*/
+rstar	= 0.06;		/* equilibrium interest rate */
+delta	= (rstar-gg)/theta;	/* capital share */
+
+gam	= 0.9;		/* share on home good	*/
+sig	= 4;		/* IES home-foreign good*/
+
+
+/* simulation parameters */
+nt0 = 40;			/* before shock; 1/nt0 is also the time increment. Start graphs at time -st0 */
+step= 1/nt0;
+nt1 = 26*nt0+1;			/* after shock number of observations */
+ntt = nt0+nt1;
+st0 = 2;
+nt	= 250/step;		/* horizon for calculating integrals */
+rel	= 0.1;			/* relaxation parameter (weight on old result) */
+
+
+/* price and RER functions */
+fn PPU(q) = (gam+(1-gam)*q^(1-sig))^(1/(1-sig));
+fn PPR(q) = (1-gam+gam*q^(1-sig))^(1/(1-sig));
+fn lam(q) = PPR(q)./PPU(q);
+
+
+/* initial output */
+xs0	= 0.7;	/* calibration of relative output (in U-numeraire: XU0/(XU0+q0*XR0))*/
+XU0	= 1;	/* initial U output (arbitrary); XR0 determined by calibration so that xs0 is the equilibrium output share*/
+
+/* calibration of deltaR to the drop in asset prices */
+DVV = -0.25;	/* drop in asset prices at time of crash */
+deltaR = -xs0*delta*(1+DVV)/(DVV*(1-xs0)-xs0);
+deltabar= delta*xs0+deltaR*(1-xs0);
+
+
+/* initial portfolio allocations: calibrated to initial US share in global portfolio and to initial NFA position */
+shRU0	= 0.05;			/* initial share of R wealth invested in U. Benchmark: 0.3 */
+NFAX0	= -0.00;		/* initial NFA/output */
+
+/* Initial Shares */
+ARU0	= shRU0*((1-xs0)/xs0-theta*NFAX0);		/* initial shares of U held by R (home bias assumption) */
+AUR0	= (theta*NFAX0+ARU0)*xs0/(1-xs0);		/* initial shares of R held by U (home bias assumption) */
+
+
+/* before the shock, asset values wealth*/
+VXUss	= 1/theta;
+VXRss	= 1/theta;
+_vxu	= VXUss;
+_vxr	= VXRss;
+_xs	= xs0;
+_xu	= XU0;
+_aru	= ARU0;
+_aur	= AUR0;
+
+/* solves for SS t/t and initial E output so that (a) we clear the goods market and (b) initial output share is xs0 */
+{ x,fvp,jc,tcode } =  nlsys(&solveq,1|1);	
+if tcode/=1;
+	print "error: could not find a SS solution";
+	end;
+endif;
+
+Qss	= x[1]^2;
+XR0	= x[2]^2;
+Lamss	= lam(Qss);
+Tss	= tcode;
+
+WXRss	= ARU0*VXUss*XU0/Qss/XR0+(1-AUR0)*VXRss;
+WXUss	= (1-ARU0)*VXUss+AUR0*VXRss*XR0*Qss/XU0;
+
+
+
+/* initializes algorithm by assuming asset values are unchanged at t=0
+** solves for the current terms of trade q(0) consistent with wealth holdings
+*/
+VXU0i	= VXUss;
+if deltaR>0;
+	VXR0i = VXRss;
+else;
+	VXR0i = 0;
+endif;
+nd = 1;
+hi = hsec;
+dd	= 1000; do while dd>1e-3;
+	/* after the shock, initial wealth */
+	_vxu	= VXU0i;
+	_vxr	= VXR0i;
+	_xu	= XU0;
+	_xr	= XR0;
+	_aru	= ARU0;
+	_aur	= AUR0;
+	if deltaR == 0;
+		{ x,fvp,jc,tcode } =  nlsys(&solveq0,1);
+		_vxu = (XU0+(x^2)*XR0)/XU0/theta;
+		VXU0i= _vxu;
+	else;
+		{ x,fvp,jc,tcode } =  nlsys(&solveq2,1);	
+	endif;
+	
+	Q0	= x^2;
+	T0	= tcode;
+	xs0i	= _XU/(_XU+Q0*_XR);
+	WXR0	= ARU0*VXU0i*XU0/XR0/Q0+(1-AUR0)*VXR0i;
+	WXU0	= (1-ARU0)*VXU0i+AUR0*VXR0i*XR0*Q0/XU0;
+
+	/* now iterate over time using shooting algorithm to find asset value at t=0, given the initial guess VXU0i */
+	xp = xs0i;qp = Q0;WXUp = WXU0; WXRp = WXR0; rp = {}; Tp = T0;
+	XUP= XU0; XRP = XR0; VXU0 = delta*step; VXR0 = delta*step;
+	dlnqp = {}; sumdelta = 0;
+	i=1; do while i le nt;
+		_wxu	= WXUp[i];
+		_xu	= XUP[i];
+		_xr	= XRP[i];
+		_q	= Qp[i];
+		_xst 	= Xp[i];
+		/* find /t growth such that goods market clears in t+dt */
+		{ x,fvp,jc,tcode } =  nlsys(&solvederiv,0);
+		dlnq	= x;
+		Tp	= Tp|tcode;
+		dlnX	= gg*_xst+(ggr+dlnq)*(1-_xst);
+		rf	= dlnX+(delta*_xst+deltaR*(1-_xst))*theta;
+		dWu	= (rf-theta-gg)*_wxu+(1-delta);
+		qf	= _q*(1+dlnq*step);
+		wxuf	= _wxu+dwu*step;
+		xuf	= _xu*(1+gg*step);
+		xrf	= _xr*(1+ggr*step);
+		xf	= xuf/(xuf+qf*xrf);
+
+		dlnqp	= dlnqp|dlnq;
+		WXUp	= WXUp|wxuf;
+		WXRp	= WXRp|(1/theta-wxuf*xf)/(1-xf);
+		Xp	= Xp|xf;
+		Rp	= Rp|rf;
+		Qp	= Qp|qf;
+		XUp	= Xup|xuf;
+		XRp	= XRp|xrf;
+		Sumdelta= Sumdelta+(_xst*delta+(1-_xst)*deltaR)*step;
+		if deltaR>0;
+			VXU0	= VXU0+step*delta*exp(-theta*sumdelta)*xf/xp[1];
+			VXR0	= VXR0+step*deltaR*exp(-theta*sumdelta)*(1-xf)/(1-xp[1]);
+		endif;
+	i=i+1; endo;
+
+	if deltaR == 0;
+		VXU0 = (XU0+Qp[1]*XR0)/theta/XU0;
+		VXR0 = 0;
+	endif;
+	dd = SQRT((VXU0-VXU0i)^2+(VXR0-VXR0i)^2);
+	print /flush "iteration: " nd "; dd: " dd;
+	print /flush "	VXU0i: " VXU0i "; VXU0: " VXU0;
+	print /flush "	VXR0i: " VXR0i "; VXR0: " VXR0;
+	nd = nd+1;
+	VXU0i = (1-rel)*VXU0+rel*VXU0i; VXR0i = (1-rel)*VXR0+rel*VXR0i;
+endo;
+hf = hsec;
+print "seconds per iteration: " (hf-hi)/100/nd;
+
+
+/* solves for asset values over time;
+The method consists in calculating the above integrals repeatedly for every period */
+
+
+	WXR0	= ARU0*VXU0*XU0/XR0/Q0+(1-AUR0)*VXR0;
+	WXU0	= (1-ARU0)*VXU0+AUR0*VXR0*XR0*Q0/XU0;
+	
+	/* now iterate over time using shooting algorithm from 0 to nt+nt1 */
+	xp = xp[1]; qp = Q0;WXUp = WXU0; WXRp = WXR0; VXUP = {}; VXEP = {};
+	rp = {}; 
+	XUP= XU0; XRP = XR0; 
+
+	dlnqp = {};
+	i=1; do while i le nt+nt1;
+		_wxu	= WXUp[i];
+		_xu	= XUP[i];
+		_xr	= XRP[i];
+		_q	= Qp[i];
+		_xst 	= Xp[i];
+		/* find /t growth such that goods market clears in t+dt */
+		{ x,fvp,jc,tcode } =  nlsys(&solvederiv,0);
+		dlnq	= x;
+		Tp	= Tp|tcode;
+		dlnX	= gg*_xst+(ggr+dlnq)*(1-_xst);
+		rf	= dlnX+(delta*_xst+deltaR*(1-_xst))*theta;
+		dWu	= (rf-theta-gg)*_wxu+(1-delta);
+		qf	= _q*(1+dlnq*step);
+		wxuf	= _wxu+dwu*step;
+		xuf	= _xu*(1+gg*step);
+		xrf	= _xr*(1+ggr*step);
+		xf	= xuf/(xuf+qf*xrf);
+
+		dlnqp	= dlnqp|dlnq;
+		WXUp	= WXUp|wxuf;
+		WXRp	= WXRp|(1/theta-wxuf*xf)/(1-xf);
+		Xp	= Xp|xf;
+		Rp	= Rp|rf;
+		Qp	= Qp|qf;
+		XUp	= Xup|xuf;
+		XRp	= XRp|xrf;
+	i=i+1; endo;
+
+	VXUP = {}; VXRP={};
+	i = 1; do while i le nt1;
+		VXUi	= delta*step/xp[i]*sumc(xp[i:i+nt].*exp(-theta*step*cumsumc(xp[i:i+nt]*delta+(1-xp[i:i+nt])*deltaR)));
+		VXRi	= deltaR*step/(1-xp[i])*sumc((1-xp[i:i+nt]).*exp(-theta*step*cumsumc(xp[i:i+nt]*delta+(1-xp[i:i+nt])*deltaR)));
+		VXUp = VXUP|VXUi;
+		VXRp = VXRP|VXRi;
+	i = i+1; endo;
+
+/* add periods before 0 */
+xpinf	= xp[rows(xp)];
+qpinf	= Qp[rows(Qp)];
+lampinf	= lam(qpinf);
+xp	= xs0*ones(nt0,1)|xp[1:nt1];
+qp	= Qss*ones(nt0,1)|Qp[1:nt1];
+rp	= rstar*ones(nt0,1)|rp[1:nt1];
+WXUp	= (AUR0/theta*(1-xs0)/xs0+(1-ARU0)/theta)*ones(nt0,1)|WXup[1:nt1];
+VXUp	= 1/theta*ones(nt0,1)|VXUp[1:nt1];					/* initial VU */
+WXRp	= 1/theta/(1-xs0)-(AUR0/theta*(1-xs0)/xs0+(1-ARU0)/theta)*ones(nt0,1)*xs0/(1-xs0)|WXRp[1:nt1];	/* initial WE/XE */
+VXRp	= 1/theta/(1-xs0)-1/theta*ones(nt0,1)*xs0/(1-xs0)|VXRp[1:nt1];
+
+
+TBXUp=(1-theta*WXUP); 	/* U trade balance/U output */ 
+TBXRp=(1-theta*WXRP); 	/* E trade balance/E output */
+CAXRp = TBXRp+rp.*(WXRP-VXRP);
+CAXUP = TBXUp+rp.*(WXUP-VXUP);
+
+/*NFA for U (relative to WU) */
+NFAXUp = (WXUP-VXUp);
+
+/* share of E invested in U
+** assumes that AUE0 remains constant */
+shRUp = (WXRp-VXRp+AUR0*VXRp)./WXRp;
+
+
+/* real exchange rate */
+lamp = lam(qp);
+
+
+tt = seqa(-st0,st0/nt0,nt0)|seqa(0,step,nt1);
+ntt= rows(tt);
+
+/* checking the excess demand on goods market */
+zz = theta*(gam*wxup.*PPU(qp)^(sig-1)+(1-gam)*(1/theta./xp-wxup).*PPR(qp)^(sig-1));
+
+/* inflation rates (expected)*/
+dpU= (LAGN(PPU(qp),-1)./PPU(qp)-1)/step;
+dpU[1:nt0] = zeros(nt0,1);
+dpR= (LAGN(PPR(qp),-1)./PPR(qp)-1)/step;
+dpR[1:nt0] = zeros(nt0,1);
+
+/* computes real interest rates */
+rUp= rp-dpU;
+rRp= rp-dpR;
+rwp = (xp.*rup+(1-xp).*rrp);
+
+/* asymptotic limits */
+rinf = gg+delta*theta-(1-xpinf)*(delta-deltaR)*theta;
+vul = delta/(rinf-gg);
+wul = (1-delta)/(gg+theta-rinf);
+vrl = deltaR/(rinf-gg);
+wrl = (1-deltaR)/(gg+theta-rinf);
+shrUl = (wrl-vrl+AUR0*vrl)/wrl;
+caul= gg*(wul-vul);
+tbul = 1-theta*wul;
+nfaul = wul-vul;
+
+
+/* FIGURES */
+begwind;
+window(3,3,0);
+setwind(1);
+graphset;
+_pdate = 0;
+_plwidth = 10|10;
+_pcolor = 15;
+_ptitlht = 0.3;
+_pnumht  = 0.15;
+_paxht	= 0.2;
+xtics(tt[1],tt[ntt],2,0);
+xlabel("years");
+ylabel("percent");
+_plegctl = 0;
+_plegstr = "CA/X\000TB/X";
+title("Panel A: Current Account/Output");
+/*_pline = (1~1~tt[1]~caul*100~tt[ntt]~caul*100~1~15~1);*/
+_pline = (1~6~tt[1]~0~tt[ntt]~0~1~15~1)|(1~1~tt[1]~caul*100~tt[ntt]~caul*100~1~15~1);
+/*ytics(-15,10,5,2);*/
+ytics(-15,15,5,2);
+xy(tt,CAXUp*100);
+nextwind;
+	
+graphset;
+_pdate = 0;
+_plwidth = 10|10|1|1;
+_pcolor = 15;
+_ptitlht = 0.3;
+_pnumht  = 0.15;
+_paxht	= 0.2;
+xtics(tt[1],tt[ntt],2,0);
+xlabel("years");
+ylabel("percent");
+title("Panel B: Net Foreign Assets/Output");
+_pline = (1~1~tt[1]~0~tt[ntt]~0~1~15~1)|(1~1~tt[1]~nfaul*100~tt[ntt]~nfaul*100~1~15~1);
+/*ytics(-100,10,10,1);*/
+ytics(-100,20,10,1);
+xy(tt,NFAXUp*100);
+nextwind;
+nextwind;
+
+graphset;
+_pdate = 0;
+_plwidth = 10|5|5|1;
+_pcolor = 15;
+_ptitlht = 0.3;
+_pnumht  = 0.15;
+_paxht	= 0.2;
+_plegctl = 0;
+xtics(tt[1],tt[ntt],2,0);
+xlabel("years");
+ylabel("percent");
+title("Panel C: World Real Interest Rate");
+_pline = (1~1~tt[1]~100*rstar~tt[ntt]~100*rstar~1~15~1)|(1~1~tt[1]~100*rinf~tt[ntt]~100*rinf~1~15~1);
+/*ytics(5,6.5,0.25,2);*/
+ytics(5.5,6.1,0.1,2);
+xy(tt,rwp*100);
+nextwind;
+
+
+graphset;
+_pdate = 0;
+_plwidth = 10|10|1|1;
+_pcolor = 15;
+_ptitlht = 0.3;
+_pnumht  = 0.15;
+_paxht	= 0.2;
+xtics(tt[1],tt[ntt],2,0);
+xlabel("years");
+ylabel("percent");
+_plwidth = 10|1;
+title("Panel D: Global Portfolio Share");
+_pline = (1~1~tt[1]~shRu0*100~tt[ntt]~shRU0*100~1~15~1)|(1~1~tt[1]~shRul*100~tt[ntt]~shRUl*100~1~15~1);
+/*ytics(00,80,10,2);*/
+ytics(00,50,10,2);
+xy(tt,shRUp*100);
+nextwind;
+nextwind;
+
+graphset;
+_pdate = 0;
+_plwidth = 10|10|1|1;
+_pcolor = 15;
+_ptitlht = 0.3;
+_pnumht  = 0.15;
+_paxht	= 0.2;
+xtics(tt[1],tt[ntt],2,0);
+xlabel("years");
+_plwidth = 10|1;
+title("Panel E: Real Exchange Rate");
+_pline = (1~1~tt[1]~lamss~tt[ntt]~lamss~1~15~1)|(1~1~tt[1]~lampinf~tt[ntt]~lampinf~1~15~1);
+/*ytics(0.88,1.32,0.04,2);*/
+ytics(1.00,1.2,0.04,2);
+xy(tt,lamp);
+endwind;
+
+graphset;
+
+end;
+
+/* PROCEDURES */
+proc solvederiv(xx);
+  local dw,dlnq,zz,rr,dlnx,zz0,zz1,qf,wxuf,wxrf,xuf,xrf;
+	dlnq = xx[1];
+	dlnX = gg*_xst+(ggr+dlnq)*(1-_xst);
+	rr = dlnX+(delta*_xst+deltaR*(1-_xst))*theta;
+	dW = (rr-theta-gg)*_wxu+(1-delta);
+	qf  = _q*(1+dlnq*step);
+	wxuf = _wxu+dw*step;
+	xuf = _xu*(1+gg*step);
+	xrf = _xr*(1+ggr*step);
+	wxrf = (xuf+qf*xrf)/theta/xuf-wxuf;
+	zz1 = 1-theta*(gam*wxuf*PPU(qf)^(sig-1)+(1-gam)*wxrf*PPR(qf)^(sig-1));
+  retp(zz1);
+endp;	
+
+proc solveq(x);
+/* solves for initial t/t and R-output to (a) clear goods market and (b) match given output share*/
+  local q,zz1,zz2,wxu,wxe,xs,xr;
+	q  	= x[1]^2;
+	xr	= x[2]^2;
+	xs	= _xu/(_xu+q*xr);
+	zz1	= _xs-xs;
+	wxu	= (1-_aru)*_vxu+_aur*_vxr*(1-xs)/xs;
+	zz2	= 1-theta*(gam*wxu*PPU(q)^(sig-1)+(1-gam)*(1/theta/xs-wxu)*PPR(q)^(sig-1));
+  retp(zz1|zz2);
+endp;
+
+proc solveq0(x);
+/* procedure for deltaR=0 since then there's no foreign wealth initially */
+  local q,zz,wxu,wxr,x0,vxu;
+	q  =x^2;
+	x0 = _xu/(_xu+q*_xr);
+	vxu= 1/theta/x0;
+	wxr	= _aru*vxu;
+	wxu	= (1-_aru)*vxu;
+	zz = 1-theta*(gam*wxu*PPU(q)^(sig-1)+(1-gam)*wxr*PPR(q)^(sig-1));
+  retp(zz);
+endp;
+
+proc solveq2(x);
+/* solves for initial t/t given initial output */
+  local q,zz,wxu,xs;
+	q  	= x[1]^2;
+	xs	= _xu/(_xu+q*_xr);
+	wxu	= (1-_aru)*_vxu+_aur*_vxr*(1-xs)/xs;
+	zz	= 1-theta*(gam*wxu*PPU(q)^(sig-1)+(1-gam)*(1/theta/xs-wxu)*PPR(q)^(sig-1));
+  retp(zz);
+endp;

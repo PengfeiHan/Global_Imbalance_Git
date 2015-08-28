@@ -1,0 +1,229 @@
+/* simulations U-R; Created by POG, 11/20/05
+** produces figure: fig_UR_0307.eps
+** permanent collapse in delta_R
+** delta_R calibrated to the collapse in asset prices in R (25%).
+** exact solution to the ODE.
+*/
+
+
+library pgraph,nlsys;
+graphset;
+nlset;
+_intord = 56;		/* order of integration (Legendre integrals. Needs 36 or more)*/
+_intmax = 10000;	/* upper bound for integral (i.e. approximation for +infinity)*/
+__output= 0;
+
+
+/*-----------------------------------
+** parameters	
+*/
+
+theta	= 0.25;		/* output/wealth ratio	*/
+gg	= 0.03;		/* U growth rate	*/
+ggr	= gg;		/* R growth rate 	*/
+rstar	= 0.06;		/* equilibrium interest rate */
+delta	= (rstar-gg)/theta;	/* capital share */
+
+/* initial output */
+X0	= 1;		/* initial world output */
+xs0	= 0.7;		/* initial U-share of world output, remains constant (0.7)*/
+XU0	= X0*xs0;	/* initial U output */
+XR0	= X0*(1-xs0);	/* initial R output */		
+
+W0	= X0/theta;	/* initial world wealth */
+V0	= W0;		/* continuity: no jump in V0 */
+
+/* calibration of portfolio holdings */
+nfay	= 0.00;		/* initial U external debt/GDP */
+shru	= 0.05;		/* initial U-share in R wealth (0.3)*/
+
+/* initial holdings */
+AUR0	= shru+theta*nfay*(1-shru)*xs0/(1-xs0);	/* initial R-tree holdings by U */
+ARU0	= AUR0*(1-xs0)/xs0-theta*nfay;	/* initial U-tree holdings by R */
+
+/* calibrates deltaR to drop in asset values */
+DVV = -0.25;	/* drop in asset prices at time of crash */
+deltaR = -xs0*delta*(1+DVV)/(DVV*(1-xs0)-xs0);
+deltabar= delta*xs0+deltaR*(1-xs0);
+
+
+/* final portfolio share under the assumption that AUR0 is unchanged */
+ARUinf = deltabar/delta*(1-xs0)/xs0*((1-deltar)/(1-deltabar)-(1-AUR0)*deltar/deltabar);
+AURinf = AUR0;
+if ARUinf<ARU0;
+	ARUinf = ARU0;
+	AURinf = ((1-delta)/(1-deltabar)-(1-ARU0)*delta/deltabar)*deltabar/deltar*xs0/(1-xs0);
+endif;
+
+/* initial jump in asset prices at t=0 */
+VR0	= deltaR*XR0/theta/deltabar;	/* R-asset, at 0+ */
+VU0	= delta/theta/deltabar*XU0;	/* U-asset, at 0+ */
+
+/* initial wealth */
+WR0	= ARU0*VU0+(1-AUR0)*VR0;
+WU0	= (1-ARU0)*VU0+AUR0*VR0;
+
+/* functions for output shares, output, interest rates as a function of time */
+fn xs(t)	= xs0; 				/* dynamics of the output share (constant here)*/
+fn XR(t)	= XR0.*exp(ggr*t);		/* R output */
+fn XU(t)	= XU0.*exp(gg*t);		/* U output */
+fn XW(t)	= XR(t)+XU(t);			/* world output */
+fn rr(t)	= gg+deltabar*theta;		/* world interest rate (constant) */
+fn WU(t)	= WU0*exp((rr(0)-theta)*t)+(1-delta)*XU(t)/theta/(deltabar-1)*(exp(theta*(deltabar-1)*t)-1);
+
+/* time paths */
+nt0 = 40;	/* before shock; 1/nt0 is also the time increment. Start graphs at time -1. */
+nt1 = 26*nt0;	/* after shock */
+st0 = 2;	/* time increment */
+ntt = nt0+nt1;
+tt0 = seqa(-st0*nt0/nt0,st0/nt0,nt0);
+tt1 = seqa(0,1/nt0,nt1);
+tt  = tt0|tt1;
+
+xp	= xs0*ones(nt0,1);
+rp	= rstar*ones(nt0,1); 
+WXUp	= (AUR0/theta*(1-xs0)/xs0+(1-ARU0)/theta)*ones(nt0,1);	/* initial WU/XU */
+XRp	= (1-xs0)*exp(tt0*ggr);					/* initial R output */
+XUp	= xs0*exp(tt0*gg);					/* initial U output */
+VXUp	= 1/theta*ones(nt0,1);					/* initial VU */
+i=1; do while i le nt1;
+	rp = rp|rr(tt1[i]);				/* interest rate */
+	XRp = XRP|XR(tt1[i]);				/* R-output */
+	XUp = XUP|XU(tt1[i]);				/* U output */
+	xp = xp|xs(tt1[i]);				/* U output share */
+	WXUp= WXUp|(WU(tt1[i])/XU(tt1[i]));		/* U wealth/U output */
+i=i+1; endo;
+
+VXUp	= VXUp|(delta/deltabar/theta*ones(nt1,1));	/* U asset/U-output */
+WWp	= (XRp+Xup)/theta;				/* world output */
+VXRp	= (WWp-VXup.*XUP)./XRp;				/* R asset/R output */
+WXRp	= (WWp-WXUp.*Xup)./Xrp;				/* R wealth/R output */
+TBXUp	=(1-theta*WXUP);				/* U trade balance/U output */ 
+TBXRp	=(1-theta*WXRP);				/* R trade balance/R output */
+
+
+/* asymptotic limits */
+tbul = (delta-deltabar)/(1-deltabar);			/* U TB/R output */
+tbrl = (deltaR-deltabar)/(1-deltabar);			/* R TB/R output */
+wrl = (1-deltaR)/theta/(1-deltabar);			/* R wealth/R output */
+wul = (1-delta)/theta/(1-deltabar);			/* U wealth/U output */
+vul = delta/theta/deltabar;				/* U asset/U output */
+vrl = deltaR/theta/deltabar;				/* R asset/R output */
+caul = tbul+rr(0)*(wul-vul);				/* U current account/U output */
+carl = tbrl+rr(0)*(wrl-vrl);				/* R current account/R output */
+nfaul = wul-vul;
+nfarl = wrl-vrl;
+shRU0	= ARU0/(ARU0+(1-AUR0)*(1-xs0)/xs0);
+
+/* current account */
+CAXRp = TBXRP+rp.*(WXRP-VXRp);
+CAXUp = TBXUP+rp.*(WXUP-VXUp);
+
+/* time-path for portfolio share under the assumption that AURp = AUR0 */
+AURp = AUR0*ones(ntt,1);
+ARUp = (WXRp-(1-AURp).*VXRp)./VXUp./XUp.*XRp;
+
+/*NFA for U and R */
+NFAXUp = (WXUp-VXUp);
+NFAXRp = (WXRp-VXRp);
+
+
+/* FIGURES */
+begwind;
+window(2,2,0);
+setwind(1);
+graphset;
+_pdate = 0;
+_plwidth = 10|10|1|1;
+_pcolor = 15;
+_ptitlht = 0.3;
+_pnumht  = 0.15;
+_paxht	= 0.2;
+xtics(tt[1],tt[ntt],2,0);
+xlabel("years");
+ylabel("percent");
+_plegctl= 0;
+_plegstr= "CA/X\000TB/X";
+title("Panel A: Current Account/Output");
+_pline = (1~6~tt[1]~0~tt[ntt]~0~1~15~1)|(1~1~tt[1]~caul*100~tt[ntt]~caul*100~1~15~1);
+/*ytics(-25,15,5,1);*/
+ytics(-15,15,5,1);
+xy(tt,CAXUp*100);
+nextwind;
+
+graphset;
+_pdate = 0;
+_plwidth = 10|10|1|1;
+_pcolor = 15;
+_ptitlht = 0.3;
+_pnumht  = 0.15;
+_paxht	= 0.2;
+xtics(tt[1],tt[ntt],2,0);
+xlabel("years");
+ylabel("percent");
+_plegctl = 0;
+title("Panel B: Net Foreign Assets/Output");
+_pline = (1~1~tt[1]~nfaul*100~tt[ntt]~nfaul*100~1~15~1)|(1~1~tt[1]~0~tt[ntt]~0~1~15~1);
+/*
+if shru==0;
+	ytics(floor(nfaul*10)*10-10,20,10,1);
+else;
+	ytics(-290,20,10,1);
+endif;
+*/
+ytics(-100,20,10,1);
+xy(tt,NFAXUp*100);
+nextwind;
+
+graphset;
+_pdate = 0;
+_plwidth = 10|10|1|1;
+_pcolor = 15;
+_ptitlht = 0.3;
+_pnumht  = 0.15;
+_paxht	= 0.2;
+xtics(tt[1],tt[ntt],2,0);
+xlabel("years");
+ylabel("percent");
+_plegctl = 0;
+title("Panel C: Interest Rate");
+_pline = (1~1~tt[1]~100*rstar~tt[ntt]~100*rstar~1~15~1)|(1~1~tt[1]~100*rr(0)~tt[ntt]~100*rr(0)~1~15~1);
+if shru==0;
+	ytics(minc(floor(rp[nt0+1]*100)),ceil(rstar*100)+0.5,0.25,2);
+/*ytics(6.5,8.5,0.25,2);*/
+else;
+	ytics(5.0,8.5,0.25,2);
+endif;
+ytics(minc(floor(rp[nt0+1]*100))+0.5,ceil(rstar*100)+0.1,0.10,2);
+xy(tt,rp*100);
+nextwind;
+
+graphset;
+_pdate = 0;
+_plwidth = 10|10|1|1;
+_pcolor = 15;
+_ptitlht = 0.3;
+_pnumht  = 0.15;
+_paxht	= 0.2;
+xtics(tt[1],tt[ntt],2,0);
+xlabel("years");
+ylabel("percent");
+_plegctl = 0;
+title("Panel D: Global Portfolio Share");
+shRUp	= ARUp.*VXUp.*Xup./Xrp./WXrp;
+shURp	= AURp.*VXRp.*Xrp./Xup./WXup;
+shrul	= 1-(1-AUR0)*(1-deltabar)/deltabar*deltaR/(1-deltaR);
+_pline = (1~1~tt[1]~shrul*100~tt[ntt]~shrul*100~1~15~1)|(1~1~tt[1]~shru0*100~tt[ntt]~shrU0*100~1~15~1);
+/*ytics(20,60,10,2);*/
+if shru	== 0.0;
+	ytics(00,ceil(shrul*10)*10+10,10,2);
+else;
+	ytics(20,100,10,2);
+endif;
+/*ytics(00,80,10,2);*/
+ytics(00,50,10,2);
+xy(tt,shRup*100);
+endwind;
+graphset;
+
+end;

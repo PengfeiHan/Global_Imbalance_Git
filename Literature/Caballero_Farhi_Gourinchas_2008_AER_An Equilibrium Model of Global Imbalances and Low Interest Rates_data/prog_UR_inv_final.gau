@@ -1,0 +1,324 @@
+/* prog_UR_inv1.gau. Created POG 12/29/05
+** produces figure: fig_ur_inv_080907.eps
+** U-R model with investment margin.
+** allows for FDI. 
+*/
+
+library pgraph, nlsys;
+graphset;
+nlset;
+__output=0;
+
+
+theta	= 0.25;		/* output/wealth ratio	*/
+gg	= 0.03;		/* U growth rate	*/
+ggn	= 0.03;		/* growth in number of trees */
+ggz	= gg-ggn;	/* growth in output per tree */
+kappap	= 0.02;		/* FDI/output price */
+kappa	= 0.0;		/* investment price */
+
+rstar	= 0.06;		/* equilibrium interest rate */
+delta	= (rstar-ggz)*(1-kappa)/theta;	/* capital share */
+
+
+/* simulation parameters */
+nt0 = 40;			/* before shock; 1/nt0 is also the time increment. Start graphs at time -st0 */
+step= 1/nt0;
+nt1 = 26*nt0+1;			/* after shock number of observations */
+ntt = nt0+nt1;
+st0 = 2;
+nt	= 350/step;		/* horizon for calculating integrals */
+rel	= 0.1;			/* relaxation parameter (weight on old result) */
+tt0 = seqa(-st0*nt0/nt0,st0/nt0,nt0);
+tt1 = seqa(0,1/nt0,nt1);
+tt  = tt0|tt1;
+
+
+/* ------------------------1. shock to \deltaR, no FDI ------------------------*/
+
+/* initial output */
+X0	= 1;		/* initial world output */
+xs0	= 0.7;		/* initial U-share of world output, remains constant (0.7)*/
+XU0	= X0*xs0;	/* initial U output */
+XR0	= X0*(1-xs0);	/* initial R output */		
+
+W0	= X0/theta;	/* initial world wealth */
+V0	= W0;		/* continuity: no jump in V0 */
+
+/* calibrates deltaR to drop in asset values */
+DVV = -0.25;	/* drop in asset prices at time of crash */
+deltaR = -xs0*delta*(1+DVV)/(DVV*(1-xs0)-xs0);
+deltabar= delta*xs0+deltaR*(1-xs0);
+
+
+/* calibration of portfolio holdings */
+nfay	= 0.00;			/* initial U external debt/GDP */
+shru	= 0.05;			/* initial U-share in R wealth */
+AUR0	= shru+theta*nfay*(1-shru)*xs0/(1-xs0);	/* initial R-tree holdings by U */
+ARU0	= AUR0*(1-xs0)/xs0-theta*nfay;	/* initial U-tree holdings by R */
+
+
+/* initial jump in asset prices at t=0 */
+VR0	= deltaR/deltabar*(1-kappa)/theta*XR0;	/* R-asset, at 0+ */
+VU0	= delta/deltabar*XU0*(1-kappa)/theta;	/* U-asset, at 0+ */
+
+/* initial wealth (can jump if imperfect home bias) */
+WU0	= (1-ARU0)*VU0+AUR0*VR0;
+WR0	= ARU0*VU0+(1-AUR0)*VR0;
+
+/* functions for output shares, output, interest rates as a function of time */
+fn xs(t)	= xs0; 				/* dynamics of the output share (constant here)*/
+fn XR(t)	= XR0.*exp(gg*t);		/* R output */
+fn XU(t)	= XU0.*exp(gg*t);		/* U output */
+fn XW(t)	= XR(t)+XU(t);			/* world output */
+fn rr(t)	= ggz+deltabar*theta/(1-kappa);	/* world interest rate (constant) */
+fn WU(t)	= WU0*exp((rr(0)-theta)*t)+(1-delta-kappa+ggn*(1-kappa)/theta*delta/deltabar)*XU(t)/(theta+gg-rr(0))*(1-exp((rr(0)-theta-gg)*t));
+
+xp	= xs0*ones(nt0,1);
+rp	= rstar*ones(nt0,1); 
+WXUp	= (1-kappa)/theta*ones(nt0,1);	/* initial WU/XU */
+XRp	= (1-xs0)*exp(tt0*gg);					/* initial R output */
+XUp	= xs0*exp(tt0*gg);					/* initial U output */
+VXUp	= (1-kappa)/theta*ones(nt0,1);					/* initial VU */
+i=1; do while i le nt1;
+	rp = rp|rr(tt1[i]);				/* interest rate */
+	XRp = XRP|XR(tt1[i]);				/* R-output */
+	XUp = XUP|XU(tt1[i]);				/* U output */
+	xp = xp|xs(tt1[i]);				/* U output share */
+	WXUp= WXUp|(WU(tt1[i])/XU(tt1[i]));		/* U wealth/U output */
+i=i+1; endo;
+
+VXUp	= VXUp|((delta/deltabar*(1-kappa)/theta)*ones(nt1,1));	/* U asset/U-output */
+WWp	= (XRp+Xup)/theta;				/* world output */
+VXRp	= (WWp-VXup.*XUP)./XRp;				/* R asset/R output */
+WXRp	= (WWp-WXUp.*Xup)./Xrp;				/* R wealth/R output */
+TBXUp	=(1-theta*WXUP-kappa);				/* U trade balance/U output */ 
+TBXRp	=(1-theta*WXRP-kappa);				/* R trade balance/R output */
+
+/* current account */
+CAXRp = TBXRP+rp.*(WXRP-VXRp);
+CAXUp = TBXUP+rp.*(WXUP-VXUp);
+
+/*NFA for U and R */
+NFAXUp = (WXUp-VXUp);
+NFAXRp = (WXRp-VXRp);
+
+/* save variables */
+TBXUpf = TBXUp;
+CAXUpf = CAXUp;
+NFAXUpf= NFAXUp;
+rpf	= rp;
+VXUpf	= VXUp;
+WXUpf	= WXUp;
+XUpf	= XUp;
+XRpf	= XRp;
+
+
+
+/* ------------------ 2 now collapse in \deltaR when FDI is available -------------------------------*/
+
+/* initial output */
+X0	= 1;		/* initial world output */
+xs0	= 0.7;		/* initial U-share of world output, remains constant (0.7)*/
+XU0	= X0*xs0;	/* initial U output */
+XRo0	= X0*(1-xs0);	/* initial R output (old trees)*/		
+XRn0	= 0;		/* initial R output (new trees)*/
+
+
+/* before the shock, asset values wealth*/
+VXUss	= delta/(delta*theta/(1-kappa)-ggn);
+VXRss	= VXUss;
+_vxu	= VXUss;
+_vxr	= VXRss;
+_xso	= xs0;
+_xsn	= 0;
+_xu	= XU0;
+_aru	= ARU0;
+_aur	= AUR0;
+
+WXRss	= VXRss;
+WXUss	= VXUss;
+
+
+/* the solution uses a `reverse shooting' algorithm. We start with xsRo very close to 0 and vxsro at its steady state value and move 'back' toward time 0
+** the solution direcly provides us with a time path for the interest rate and other variables of interest */
+
+vXsRoi	= VXRss/XRo0;	/* final asset value/output for old trees */
+fn xsRo(t) = XRo0/X0*exp(-ggn*t);	/* share of world output in "old" trees */
+
+
+xsRoi 	= 1e-5;				/* final value for xsRo very close to steady state of 0*/
+vxsRoi	= (1-kappa)*deltaR/delta/theta;	/* final value for VxsRo at the steady state (1-kappa)*delta/deltaR/theta*/
+vxsUi	= (1-kappa)/theta;		/* final value for VxsU at the steady state */
+ri	= ggz+delta*theta/(1-kappa);	/* steady state interest rate */
+
+xsRop 	= xsRoi;
+VxsRop	= VxsRoi;
+VxsUp	= VxsUi;
+rp	= ri;
+dd	= 1000;
+i = 1; do while dd>1e-3;
+	dx	= ggn*xsRop[i];
+	XsRoi	= (xsRop[i]+dx*step);
+	xsRop	= xsRop|xsRoi;		/* updated share */	
+
+	dv = theta/(1-kappa)*((delta*(1-xsRop[i])+deltaR*xsRop[i])-ggn*VxsRop[i]*xsRop[i]*(delta/deltaR-1))*VxsRop[i]-deltaR;
+	VxsRoi = VxsRop[i]-dv*step;
+	VxsRop = VxsRop|VxsRoi;
+
+	dv = (rp[i]-ggz)*VxsUp[i]-delta;
+	VxsUi = VxsUp[i]-dv*step;
+	Vxsup = VxsUp|VxsUi;
+
+	ri = ggz+(delta*(1-xsRoi)+deltaR*XsRoi)*theta/(1-kappa)-theta*ggn/(1-kappa)*VXsRoi*XsRoi*(delta/deltaR-1);
+	rp = rp|ri;
+dd = sqrt((xsRoi-xsRo(0))^2);
+i = i+1; endo;
+
+xsRop	= rev(XsRop);
+VxsRop	= rev(VXsRop);
+VxsUp	= rev(VXsUp);
+Rp	= rev(Rp);
+
+/* add initial observations */
+Rp	= Rp[1:nt1];
+VXUp	= VXSup[1:nt1];
+
+/* now uses backward integration to solve for wealth */
+VXRop	= VxsRop[1:nt1];
+XsRop	= XsRop[1:nt1];
+
+gkap	= (ggn*(1-kappa)/theta-ggn*deltaR/delta*(1-kappa)/theta);
+kappapv = seqa(ggn*deltaR/delta*(1-kappa)/theta,gkap/3,4);
+fn ZR(t) = exp(ggz*t);
+fn NR(t) = XRo0*exp(ggn*t);
+
+ll = 1; do while ll le rows(kappapv);
+	kappap = kappapv[ll];
+	WXUp	= (1-ARU0)*VXUp[1]+AUR0*VXRop[1]*(1-xs0)/xs0;
+	XsRnp	= 0;
+
+	i=1; do while i le nt1;
+		dw = (rp[i]-theta-gg)*WXUp[i]+(1-delta-kappa/xs0)+ggn*((1-kappa)/theta/Xs0-VXRop[i]*XsRop[i]/xs0*(1-delta/deltaR)-kappaP*(1-xs0-xsRop[i])/xs0/ggn);
+		WXUi = WXUP[i]+dw*step;
+		WXUp = WXUP|WXUi;
+		XsRNi = (NR(i*step)-NR(0))*ZR(i*step)/exp(gg*i*step);
+		XsRnp = XsRnp|XsRni;
+	i=i+1; endo;
+
+
+	/* add initial observations */
+	WXUp	= (1-kappa)/theta*ones(nt0,1)|WXUp[1:nt1];
+	Vxupi	= (1-kappa)/theta*ones(nt0,1)|VXUp[1:nt1];
+	rpi	= rstar*ones(nt0,1)|rp;  
+	/* computes variables of interest */
+	TBXUp	=(1-theta*WXUP-kappa);				/* U trade balance/U output */ 
+	CAXUp	= TBXUP+rpi.*(WXUP-VXUpi);
+	NFAXUp	= WXUp-VXUpi;
+
+	/* save variables */
+	TBXUpf = TBXUpf~TBXUp;
+	CAXUpf = CAXUpf~CAXUp;
+	NFAXUpf= NFAXUpf~NFAXUp;
+	WXUpf	= WXUPf~WXUp;
+ll = ll+1; endo;
+rp	= rstar*ones(nt0,1)|rp;  
+VXUp	= (1-kappa)/theta*ones(nt0,1)|VXUp[1:nt1];
+/* save variables */
+rpf	= rpf~rp;
+VXUpf	= VXUpf~VXUp;
+
+
+
+/* limit values */
+rul	= deltabar*theta/(1-kappa)+ggz;
+wul	= (1-delta-kappa+ggn*(1-kappa)/theta)/(theta+gg-rul);
+vul	= (1-kappa)*delta/deltabar/theta;
+caul	= gg*(wul-vul);
+tbul	= 1-theta*wul;
+nfaul	= wul-vul;
+
+/* FIGURES */
+begwind;
+window(2,2,0);
+setwind(1);
+graphset;
+_pdate = 0;
+_plwidth = 10|10|10|10|10;
+_pcolor = 15;
+_ptitlht = 0.3;
+_pnumht  = 0.15;
+_paxht	= 0.2;
+xtics(tt[1],tt[ntt],2,0);
+xlabel("years");
+ylabel("percent");
+_plegctl = 1;
+_plegstr ="no FDI\000Kappa]P[=5%\000Kappa]P[=12%";
+title("Panel A: Current Account/Output");
+_pline = (1~1~tt[1]~0~tt[ntt]~0~1~15~1);
+ytics(-15,5,5,2);
+xy(tt,CAXUpf[.,1 2 5]*100);
+nextwind;
+	
+graphset;
+_pdate = 0;
+_plwidth = 10|10|10|10|10;
+_pcolor = 15;
+_ptitlht = 0.3;
+_pnumht  = 0.15;
+_paxht	= 0.2;
+xtics(tt[1],tt[ntt],2,0);
+xlabel("years");
+ylabel("percent");
+title("Panel B: Net Foreign Assets/Output");
+_plegctl = 1;
+_plegstr ="no FDI\000Kappa]P[=5%\000Kappa]P[=12%";
+/*_pline = (1~1~tt[1]~0~tt[ntt]~0~1~15~1)|(1~1~tt[1]~nfaul*100~tt[ntt]~nfaul*100~1~15~1);*/
+_pline = (1~1~tt[1]~0~tt[ntt]~0~1~15~1);
+ytics(-60,10,10,1);
+xy(tt,NFAXUpf[.,1 2 5]*100);
+nextwind;
+
+
+graphset;
+_pdate = 0;
+_plwidth = 10|10;
+_pcolor = 15;
+_ptitlht = 0.3;
+_pnumht  = 0.15;
+_paxht	= 0.2;
+_plegctl = 0;
+xtics(tt[1],tt[ntt],2,0);
+xlabel("years");
+ylabel("percent");
+title("Panel C: World Real Interest Rate");
+_plegctl = 1;
+_plegstr ="no FDI\000FDI";
+_pline = (1~1~tt[1]~100*rstar~tt[ntt]~100*rstar~1~15~1);
+ytics(5.0,6.2,0.1,2);
+xy(tt,rpf*100);
+nextwind;
+
+
+graphset;
+_pdate = 0;
+_plwidth = 10|10|10|10|10;
+_pcolor = 15;
+_ptitlht = 0.3;
+_pnumht  = 0.15;
+_paxht	= 0.2;
+xtics(tt[1],tt[ntt],2,0);
+xlabel("years");
+ylabel("percent");
+_plegctl = 1;
+_plegstr ="no FDI\000Kappa]P[=5%\000Kappa]P[=12%";
+title("Panel D: Trade Balance/Output");
+_pline = (1~1~tt[1]~0~tt[ntt]~0~1~15~1);
+ytics(-15,5,5,2);
+xy(tt,TBXupf[.,1 2 5]*100);
+endwind;
+
+graphset;
+
+end;
+
